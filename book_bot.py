@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import os
+from urllib.parse import quote_plus
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -37,15 +38,44 @@ logger = logging.getLogger(__name__)
 # ─── Open Library API ─────────────────────────────────────────────────────────
 SEARCH_URL = "https://openlibrary.org/search.json"
 BOOK_URL   = "https://openlibrary.org"
+SEARCH_FIELDS = (
+    "key,title,author_name,first_publish_year,subject,isbn,cover_i,"
+    "number_of_pages_median,ia"
+)
 
 async def search_books(query: str, limit: int = 5) -> list[dict]:
     """Ищет книги через Open Library API."""
-    params = {"q": query, "limit": limit, "fields": "key,title,author_name,first_publish_year,subject,isbn,cover_i,number_of_pages_median"}
+    params = {"q": query, "limit": limit, "fields": SEARCH_FIELDS}
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(SEARCH_URL, params=params)
         r.raise_for_status()
         data = r.json()
     return data.get("docs", [])
+
+def build_source_links(book: dict) -> list[str]:
+    """Собирает полезные внешние источники по книге."""
+    title = book.get("title", "")
+    authors = ", ".join(book.get("author_name", []))
+    search_query = quote_plus(" ".join(part for part in [title, authors] if part))
+    sources = []
+
+    key = book.get("key", "")
+    if key:
+        sources.append(f"[Open Library]({BOOK_URL}{key})")
+
+    ia_ids = book.get("ia", [])
+    if ia_ids:
+        sources.append(f"[Internet Archive](https://archive.org/details/{ia_ids[0]})")
+
+    isbns = book.get("isbn", [])
+    if isbns:
+        sources.append(f"[ISBN Search](https://isbnsearch.org/isbn/{isbns[0]})")
+
+    if search_query:
+        sources.append(f"[Google Books](https://books.google.com/books?q={search_query})")
+        sources.append(f"[WorldCat](https://search.worldcat.org/search?q={search_query})")
+
+    return sources
 
 def format_book(book: dict, index: int) -> str:
     """Форматирует одну книгу для вывода."""
@@ -67,6 +97,11 @@ def format_book(book: dict, index: int) -> str:
     ]
     if link:
         lines.append(f"🔗 [Открыть на Open Library]({link})")
+
+    sources = build_source_links(book)
+    if sources:
+        lines.append("🌐 *Источники:* " + " • ".join(sources))
+
     return "\n".join(lines)
 
 # ─── Handlers ─────────────────────────────────────────────────────────────────
